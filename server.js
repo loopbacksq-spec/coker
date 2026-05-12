@@ -37,11 +37,35 @@ const getUserIP = (req) => {
     return ip;
 };
 
-// МИДЛВЕЙР ДЛЯ ПРОВЕРКИ БАНА
+// МИДЛВЕЙР ДЛЯ ПРОВЕРКИ БАНА С КРАСНЫМ ЭКРАНОМ СМЕРТИ И МАСКОЙ
 app.use((req, res, next) => {
     const ip = getUserIP(req);
     if (bannedIPs.includes(ip)) {
-        return res.status(403).send('<body style="background:#000;color:#fff;font-family:monospace;display:flex;justify-content:center;align-items:center;height:100vh;"><h1>[ ACCESS DENIED: YOUR IP IS BANNED ]</h1></body>');
+        return res.status(403).send(`
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>ДОСТУП ЗАБЛОКИРОВАН</title>
+    <style>
+        body { background: #ff0000; color: #fff; font-family: 'Courier New', monospace; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; margin: 0; padding: 20px; text-align: center; overflow: hidden; }
+        .mask { width: 250px; height: 250px; margin-bottom: 30px; filter: drop-shadow(0px 0px 20px rgba(0,0,0,0.7)); }
+        h1 { font-size: 32px; font-weight: bold; text-shadow: 2px 2px #000; letter-spacing: 2px; }
+    </style>
+</head>
+<body>
+    <svg class="mask" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <path d="M15,12 C15,12 25,7 50,7 C75,7 85,12 85,12 L85,25 C85,55 70,82 50,93 C30,82 15,55 15,25 Z" fill="#000" stroke="#fff" stroke-width="2.5"/>
+        <path d="M22,26 C30,24 38,20 46,23 C40,25 32,29 22,26 Z" fill="#fff"/>
+        <path d="M78,26 C70,24 62,20 54,23 C60,25 68,29 78,26 Z" fill="#fff"/>
+        <rect x="3" y="28" width="94" height="15" fill="#000" stroke="#fff" stroke-width="2.5" transform="rotate(-4 50 35)"/>
+        <path d="M30,62 C35,54 45,52 50,59 C55,52 65,54 70,62 C65,70 35,70 30,62 Z" fill="#fff"/>
+        <path d="M47,75 L53,75 L54,88 L46,88 Z" fill="#fff"/>
+    </svg>
+    <h1> ВЫ ЗАБЛОКИРОВАНЫ НА ПРОЕКТЕ! </h1>
+</body>
+</html>
+        `);
     }
     next();
 });
@@ -62,7 +86,7 @@ app.get('/api/posts/:id', (req, res) => {
     else res.status(404).json({ error: '404 Not Found' });
 });
 
-// API: Создать пост (теперь сохраняет IP автора скрыто от всех в базе данных)
+// API: Создать пост
 app.post('/api/posts', (req, res) => {
     const { title, description, type } = req.body;
     if (!title || !description) return res.status(400).json({ error: 'Заполни поля' });
@@ -72,7 +96,7 @@ app.post('/api/posts', (req, res) => {
         title,
         description,
         type: type === 'private' ? 'private' : 'public',
-        authorIP: getUserIP(req), // Привязываем IP автора внутри posts.json для бана
+        authorIP: getUserIP(req),
         date: new Date().toISOString()
     };
     
@@ -81,19 +105,18 @@ app.post('/api/posts', (req, res) => {
     res.json({ success: true, id: newPost.id });
 });
 
-// АДМИН-API: Удалить пост (Только для твоего IP)
+// АДМИН-API: Удалить пост
 app.delete('/api/admin/delete/:id', (req, res) => {
     const currentIP = getUserIP(req);
     if (currentIP !== ADMIN_IP && currentIP !== '127.0.0.1') {
         return res.status(403).json({ error: 'Forbidden' });
     }
-    
     posts = posts.filter(p => p.id !== req.params.id);
     savePosts();
     res.json({ success: true });
 });
 
-// АДМИН-API: Забанить автора поста по IP (Только для твоего IP)
+// АДМИН-API: Бан по IP автора
 app.post('/api/admin/ban/:id', (req, res) => {
     const currentIP = getUserIP(req);
     if (currentIP !== ADMIN_IP && currentIP !== '127.0.0.1') {
@@ -102,17 +125,33 @@ app.post('/api/admin/ban/:id', (req, res) => {
     
     const targetPost = posts.find(p => p.id === req.params.id);
     if (targetPost && targetPost.authorIP) {
-        // Добавляем IP автора в черный список, если его там еще нет
         if (!bannedIPs.includes(targetPost.authorIP)) {
             bannedIPs.push(targetPost.authorIP);
             saveBanned();
         }
-        // Сразу вычищаем все его посты, чтобы не засоряли сайт
         posts = posts.filter(p => p.authorIP !== targetPost.authorIP);
         savePosts();
-        res.json({ success: true, message: 'Пользователь забанен, посты удалены' });
+        res.json({ success: true });
     } else {
-        res.status(404).json({ error: 'Пост или IP автора не найдены' });
+        res.status(404).json({ error: 'Post or IP not found' });
+    }
+});
+
+// АДМИН-API: Разбан по IP через консоль
+app.post('/api/admin/unban', (req, res) => {
+    const currentIP = getUserIP(req);
+    if (currentIP !== ADMIN_IP && currentIP !== '127.0.0.1') {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+    const { ipToUnban } = req.body;
+    if (!ipToUnban) return res.status(400).json({ error: 'No IP provided' });
+
+    if (bannedIPs.includes(ipToUnban)) {
+        bannedIPs = bannedIPs.filter(ip => ip !== ipToUnban);
+        saveBanned();
+        return res.json({ success: true, message: `IP ${ipToUnban} успешно разблокирован.` });
+    } else {
+        return res.status(444).json({ error: 'Данный IP не найден в списке забаненных.' });
     }
 });
 
@@ -177,7 +216,6 @@ app.get('/post/:id', (req, res) => {
 // Главный вход на сайт
 app.get('*', (req, res) => {
     const userIP = getUserIP(req);
-    // Проверка, является ли зашедший админом (для передачи флага в JS)
     const isAdmin = (userIP === ADMIN_IP || userIP === '127.0.0.1') ? 'true' : 'false';
 
     res.send(`
@@ -191,7 +229,7 @@ app.get('*', (req, res) => {
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Courier New', monospace; user-select: none; }
         body { background-color: #000; color: #fff; min-height: 100vh; padding: 20px; display: flex; justify-content: center; align-items: center; }
         
-        #auth-screen { display: flex; flex-direction: column; align-items: center; width: 100%; max-width: 750px; transition: opacity 0.4s ease; }
+        #auth-screen { display: flex; flex-direction: column; align-items: center; width: 100%; max-width: 750px; }
         .mask-wrapper { width: 280px; height: 280px; margin-bottom: 25px; animation: rotatingMask 14s infinite linear; }
         @keyframes rotatingMask { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .mask-logo { width: 100%; height: 100%; }
@@ -200,7 +238,7 @@ app.get('*', (req, res) => {
         .btn { display: block; width: 100%; background: transparent; border: 2px solid #fff; color: #fff; padding: 15px; font-size: 18px; cursor: pointer; text-transform: uppercase; font-weight: bold; }
         .btn:hover { background: #fff; color: #000; }
 
-        #main-interface { display: none; width: 100%; max-width: 1150px; opacity: 0; transition: opacity 0.5s ease; }
+        #main-interface { display: none; width: 100%; max-width: 1150px; }
         .header-panel { border-bottom: 2px solid #fff; padding-bottom: 15px; margin-bottom: 25px; text-align: center; }
         .layout-grid { display: grid; grid-template-columns: 240px 1fr 240px; gap: 25px; }
         .side-nav, .side-model { border: 2px solid #fff; padding: 20px; height: fit-content; background: #000; }
@@ -214,7 +252,7 @@ app.get('*', (req, res) => {
         .p-title { font-size: 18px; font-weight: bold; margin-bottom: 8px; text-decoration: underline; padding-right: 180px; }
         .p-desc { font-size: 14px; color: #ccc; white-space: pre-wrap; }
         
-        /* Кнопки модератора (Скрыты по дефолту) */
+        /* Кнопки модератора */
         .admin-controls { display: none; position: absolute; top: 12px; right: 12px; gap: 8px; }
         .adm-btn { background: #000; border: 1px solid #fff; color: #fff; padding: 4px 8px; font-size: 11px; cursor: pointer; font-family: inherit; font-weight: bold; }
         .adm-btn:hover { background: #fff; color: #000; }
@@ -224,6 +262,8 @@ app.get('*', (req, res) => {
         .input-group label { display: block; margin-bottom: 8px; font-size: 14px; }
         .field { width: 100%; background: #000; border: 1px solid #fff; color: #fff; padding: 12px; font-family: inherit; font-size: 14px; }
         
+        .user-ip-card { margin-top: 20px; padding: 10px; border: 1px dotted #fff; font-size: 11px; text-align: center; word-break: break-all; }
+
         @media(max-width: 950px) {
             .layout-grid { grid-template-columns: 1fr; }
             .side-model { display: none; }
@@ -261,6 +301,9 @@ app.get('*', (req, res) => {
             <div class="side-nav">
                 <button class="nav-btn" onclick="switchTab('catalog')">Каталог статей</button>
                 <button class="nav-btn" onclick="switchTab('create')">Создать пост</button>
+                <div class="user-ip-card">
+                    YOUR_NODE_IP:<br><span style="font-weight:bold;text-decoration:underline;">${userIP}</span>
+                </div>
             </div>
             <div class="central-block">
                 <div id="tab-catalog">
@@ -305,11 +348,18 @@ app.get('*', (req, res) => {
     <script>
         const IS_ADMIN = ${isAdmin};
 
-        function registerUserNode() {
+        // Проверка локальной памяти при загрузке страницы
+        if (localStorage.getItem('anonymous_verified') === 'true') {
             document.getElementById('auth-screen').style.display = 'none';
-            const mainInterface = document.getElementById('main-interface');
-            mainInterface.style.display = 'block';
-            setTimeout(() => mainInterface.style.opacity = '1', 50);
+            document.getElementById('main-interface').style.display = 'block';
+            loadData();
+        }
+
+        function registerUserNode() {
+            // Запоминаем согласие пользователя навсегда
+            localStorage.setItem('anonymous_verified', 'true');
+            document.getElementById('auth-screen').style.display = 'none';
+            document.getElementById('main-interface').style.display = 'block';
             loadData();
         }
 
@@ -339,34 +389,26 @@ app.get('*', (req, res) => {
                 data.reverse().forEach(p => {
                     let div = document.createElement('div');
                     div.className = 'post-card';
-                    
-                    // Клик открывает пост только при нажатии на контент, но не на админ-кнопки
                     div.onclick = (e) => {
                         if(!e.target.classList.contains('adm-btn')) window.open('/post/' + p.id, '_blank');
                     };
 
-                    // Генерируем разметку
                     let adminMarkup = '';
                     if(IS_ADMIN) {
-                        adminMarkup = `
-                            <div class="admin-controls" style="display:flex;">
-                                <button class="adm-btn" onclick="deletePost('\${p.id}')">УДАЛИТЬ</button>
-                                <button class="adm-btn ban-btn" onclick="banUser('\${p.id}')">ЗАБЛОКИРОВАТЬ</button>
-                            </div>
-                        `;
+                        adminMarkup = '<div class="admin-controls" style="display:flex;">' +
+                            '<button class="adm-btn" onclick="deletePost(\\'' + p.id + '\\')">УДАЛИТЬ</button>' +
+                            '<button class="adm-btn ban-btn" onclick="banUser(\\'' + p.id + '\\')">ЗАБЛОКИРОВАТЬ</button>' +
+                            '</div>';
                     }
 
-                    div.innerHTML = `
-                        <div class="p-title">\${p.title}</div>
-                        <div class="p-desc">\${p.description.substring(0,180)}...</div>
-                        \${adminMarkup}
-                    `;
+                    div.innerHTML = '<div class="p-title">' + p.title + '</div>' +
+                        '<div class="p-desc">' + p.description.substring(0,180) + '...</div>' +
+                        adminMarkup;
                     container.appendChild(div);
                 });
             } catch(e) {}
         }
 
-        // Админ-функция: Удалить пост
         async function deletePost(id) {
             if(!confirm('Удалить эту запись безвозвратно?')) return;
             let res = await fetch('/api/admin/delete/' + id, { method: 'DELETE' });
@@ -374,7 +416,6 @@ app.get('*', (req, res) => {
             else alert('Ошибка удаления.');
         }
 
-        // Админ-функция: Бан по IP
         async function banUser(id) {
             if(!confirm('Заблокировать создателя посты навсегда и очистить его посты?')) return;
             let res = await fetch('/api/admin/ban/' + id, { method: 'POST' });
@@ -383,6 +424,28 @@ app.get('*', (req, res) => {
                 loadData();
             } else {
                 alert('Ошибка выполнения бана.');
+            }
+        }
+
+        // КОНСОЛЬНАЯ ФУНКЦИЯ ДЛЯ ТЕБЯ (F12) -> РАЗБАН ПО IP
+        async function unban(ipAddress) {
+            if(!IS_ADMIN) return console.error('Доступ запрещен.');
+            if(!ipAddress) return console.warn('Укажите IP-адрес: unban("1.2.3.4")');
+            
+            try {
+                let res = await fetch('/api/admin/unban', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ipToUnban: ipAddress })
+                });
+                let data = await res.json();
+                if(res.ok) {
+                    console.log('%c[SUCCESS] ' + data.message, 'color: #00ff00; font-weight: bold;');
+                } else {
+                    console.error('[ERROR] ' + data.error);
+                }
+            } catch(e) {
+                console.error('Ошибка запроса на разбан');
             }
         }
 
